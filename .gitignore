@@ -11,3 +11,4 @@ venv
 # Базы данных и сохраненные файлы студентов
 *.db
 uploaded_works/
+test_data/
