@@ -1,14 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
 # Виртуальное окружение
 .venv/
-__pycache__/
-*.pyc
+venv/
+ENV/
 
-# Секретные данные
+# Секреты и локальные настройки
 token.txt
 .env
-venv
+.env.*
+!.env.example
 
-# Базы данных и сохраненные файлы студентов
+# Базы данных SQLite и служебные файлы
 *.db
-uploaded_works/
-test_data/
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+
+# Работы студентов и тестовые данные
+/uploaded_works/
+/test_data/
+
+# Логи и временные файлы
+*.log
+*.pid
+*.tmp
+
+# Резервные копии и локальные версии кода
+*.bak
+*.before_*.py
