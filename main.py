@@ -645,7 +645,7 @@ def start_new_work(message):
         msg = bot.send_message(message.chat.id, prompt, reply_markup=build_choice_keyboard(subjects))
         bot.register_next_step_handler(msg, process_subject_choice_step)
     else:
-        msg = bot.send_message(message.chat.id, "Введите название дисциплины (например, Архитектура ЭВМ). Можно отменить через /cancel.", reply_markup=telebot.types.ReplyKeyboardRemove())
+        msg = bot.send_message(message.chat.id, "Введите название дисциплины (например, История России, Социология). Можно отменить через /cancel.", reply_markup=telebot.types.ReplyKeyboardRemove())
         bot.register_next_step_handler(msg, process_subject_step)
 
 
