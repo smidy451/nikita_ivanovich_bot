@@ -51,7 +51,21 @@ if IS_DEBUG:
         print(f"Не удалось подготовить изолированную тестовую БД в /tmp: {e}")
         sys.exit(1)
 else:
-    DB_PATH = os.path.join(PROJECT_DIR, "students.db")
+    DATA_DIR = os.getenv("DATA_DIR")
+    if DATA_DIR:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        DB_PATH = os.path.join(DATA_DIR, "students.db")
+        LEGACY_DB_PATH = os.path.join(PROJECT_DIR, "students.db")
+        if not os.path.exists(DB_PATH) and os.path.isfile(LEGACY_DB_PATH):
+            source_conn = sqlite3.connect(LEGACY_DB_PATH)
+            target_conn = sqlite3.connect(DB_PATH)
+            try:
+                source_conn.backup(target_conn)
+            finally:
+                target_conn.close()
+                source_conn.close()
+    else:
+        DB_PATH = os.path.join(PROJECT_DIR, "students.db")
 
 def get_db_connection():
     return sqlite3.connect(DB_PATH, check_same_thread=False)
