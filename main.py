@@ -26,29 +26,14 @@ bot = telebot.TeleBot(TOKEN)
 IS_DEBUG = "-debug" in sys.argv or "--debug" in sys.argv
 
 if IS_DEBUG:
-    # test_data — это неизменяемый шаблон. Каждый запуск в debug получает
-    # свою временную копию БД и файлов в /tmp, поэтому тестирование не может
-    # испортить исходные тестовые данные и параллельные запуски не конфликтуют.
     TEST_DB_TEMPLATE = os.path.join(PROJECT_DIR, "test_data", "test_students.db")
-    TEST_FILES_TEMPLATE = os.path.join(PROJECT_DIR, "test_data", "subjects")
-
     if not os.path.isfile(TEST_DB_TEMPLATE):
         print(f"Ошибка debug-режима: не найдена тестовая БД: {TEST_DB_TEMPLATE}")
-        sys.exit(1)
-    if not os.path.isdir(TEST_FILES_TEMPLATE):
-        print(f"Ошибка debug-режима: не найдена папка тестовых файлов: {TEST_FILES_TEMPLATE}")
         sys.exit(1)
 
     DEBUG_RUNTIME_DIR = tempfile.mkdtemp(prefix="nikita_ivanovich_debug_", dir="/tmp")
     DB_PATH = os.path.join(DEBUG_RUNTIME_DIR, "test_students.db")
-    BASE_FILES_DIR = os.path.join(DEBUG_RUNTIME_DIR, "subjects")
-
     try:
-        # Копируем файлы, сохраняя структуру папок и атрибуты.
-        shutil.copytree(TEST_FILES_TEMPLATE, BASE_FILES_DIR)
-
-        # SQLite backup надёжнее простого копирования .db: он учитывает
-        # незаписанные страницы, если исходная база использовала WAL-журнал.
         source_conn = sqlite3.connect(TEST_DB_TEMPLATE)
         runtime_conn = sqlite3.connect(DB_PATH)
         try:
@@ -56,51 +41,15 @@ if IS_DEBUG:
         finally:
             source_conn.close()
             runtime_conn.close()
-
-        # В тестовой БД file_path может содержать абсолютные пути к шаблону
-        # внутри проекта. Перенаправляем такие пути на скопированные файлы.
-        source_root = os.path.realpath(TEST_FILES_TEMPLATE)
-        runtime_root = os.path.realpath(BASE_FILES_DIR)
-        runtime_conn = sqlite3.connect(DB_PATH)
-        try:
-            rows = runtime_conn.execute("SELECT id, file_path FROM works").fetchall()
-            for work_id, file_path in rows:
-                if not file_path:
-                    continue
-                path_for_check = file_path
-                if not os.path.isabs(path_for_check):
-                    path_for_check = os.path.join(PROJECT_DIR, path_for_check)
-                resolved_path = os.path.realpath(path_for_check)
-                try:
-                    common_root = os.path.commonpath((source_root, resolved_path))
-                except ValueError:
-                    continue
-                if common_root == source_root:
-                    relative_path = os.path.relpath(resolved_path, source_root)
-                    copied_path = os.path.join(runtime_root, relative_path)
-                    runtime_conn.execute(
-                        "UPDATE works SET file_path = ? WHERE id = ?",
-                        (copied_path, work_id),
-                    )
-            runtime_conn.commit()
-        finally:
-            runtime_conn.close()
-
-        # Временные данные существуют только в течение процесса бота.
-        # При штатном завершении очищаем временную копию.
         atexit.register(shutil.rmtree, DEBUG_RUNTIME_DIR, ignore_errors=True)
     except (OSError, sqlite3.Error) as e:
         shutil.rmtree(DEBUG_RUNTIME_DIR, ignore_errors=True)
-        print(f"Не удалось подготовить изолированные тестовые данные в /tmp: {e}")
+        print(f"Не удалось подготовить изолированную тестовую БД в /tmp: {e}")
         sys.exit(1)
 else:
     DB_PATH = os.path.join(PROJECT_DIR, "students.db")
-    BASE_FILES_DIR = os.path.join(PROJECT_DIR, "uploaded_works")
-
-os.makedirs(BASE_FILES_DIR, exist_ok=True)
 
 def get_db_connection():
-    # В debug используется одноразовая копия в /tmp; в обычном режиме — рабочая БД.
     return sqlite3.connect(DB_PATH, check_same_thread=False)
 
 def init_db():
@@ -135,6 +84,8 @@ def init_db():
     columns = {row[1] for row in cursor.fetchall()}
     if "work_code" not in columns:
         cursor.execute("ALTER TABLE works ADD COLUMN work_code TEXT")
+    if "file_id" not in columns:
+        cursor.execute("ALTER TABLE works ADD COLUMN file_id TEXT")
     if "teacher_chat_id" not in columns:
         cursor.execute("ALTER TABLE works ADD COLUMN teacher_chat_id INTEGER")
     if "teacher_message_id" not in columns:
@@ -182,7 +133,7 @@ def get_registered_teacher_group_id():
     except FileNotFoundError:
         print(f"Реестр группы не найден: {TEACHER_GROUP_REGISTRY_PATH}")
     except ValueError:
-        print("Первая непустая строка teacher_group.txt должна быть числовым ID группы.")
+        print("Первая непустая строка group_id.txt должна быть числовым ID группы.")
     except OSError as e:
         print(f"Не удалось прочитать реестр группы: {e}")
     return None
@@ -263,9 +214,8 @@ def build_work_keyboard(work_code):
 
 def build_student_work_keyboard(work_code):
     keyboard = telebot.types.InlineKeyboardMarkup(row_width=2)
-    keyboard.row(
-        telebot.types.InlineKeyboardButton("📎 Скачать файл", callback_data=f"sw|{work_code}|file"),
-        telebot.types.InlineKeyboardButton("🔄 Статус", callback_data=f"sw|{work_code}|status"),
+    keyboard.add(
+        telebot.types.InlineKeyboardButton("🔄 Статус", callback_data=f"sw|{work_code}|status")
     )
     add_copy_id_button(keyboard, work_code)
     return keyboard
@@ -334,7 +284,7 @@ def recent_values(user_id, column, subject=None, limit=6):
 
 def build_work_caption(row):
     # row соответствует get_work_by_code(): id, code, user_id, subject, name,
-    # file_path, status, timestamp, full_name, student_group.
+    # file_id, status, timestamp, full_name, student_group.
     _, work_code, _, subject, work_name, _, status, timestamp, full_name, student_group = row
     return (
         f"<b>Новая работа</b>\n"
@@ -351,7 +301,7 @@ def notify_teacher_group(work_code):
     """Публикует принятую работу с файлом в ленту преподавателя; возвращает факт доставки."""
     teacher_chat_id = get_registered_teacher_group_id()
     if teacher_chat_id is None:
-        print("Не отправлена работа преподавателю: не задан ID в teacher_group.txt")
+        print("Не отправлена работа преподавателю: не задан ID в group_id.txt")
         return False
 
     conn = get_db_connection()
@@ -362,22 +312,22 @@ def notify_teacher_group(work_code):
         print(f"Не удалось найти работу {work_code} для публикации в группе преподавателя")
         return False
 
-    _, _, _, _, _, file_path, _, _, _, _ = row
-    if not os.path.isfile(file_path):
-        print(f"Файл работы {work_code} не найден: {file_path}")
+    _, _, _, _, _, file_id, _, _, _, _ = row
+    if not file_id:
+        print(f"У работы {work_code} отсутствует Telegram file_id")
         return False
 
     try:
-        with open(file_path, "rb") as document:
-            sent_message = bot.send_document(
-                teacher_chat_id,
-                document,
-                caption=build_work_caption(row),
-                parse_mode="HTML",
-                reply_markup=build_work_keyboard(work_code),
+        sent_message = bot.send_document(
+            teacher_chat_id,
+            file_id,
+            caption=build_work_caption(row),
+            parse_mode="HTML",
+            reply_markup=build_work_keyboard(work_code),
             )
         # Сначала сохраняем результат доставки. Если не удалось сохранить ссылку на сообщение,
         # сам факт отправки остаётся успешным и пользователь не будет введён в заблуждение.
+        conn = None
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
@@ -386,9 +336,11 @@ def notify_teacher_group(work_code):
                 (teacher_chat_id, sent_message.message_id, work_code),
             )
             conn.commit()
-            conn.close()
         except Exception as metadata_error:
             print(f"Работа {work_code} отправлена, но не удалось сохранить ссылку на сообщение: {metadata_error}")
+        finally:
+            if conn is not None:
+                conn.close()
         return True
     except Exception as e:
         # Сохранённую работу не удаляем: сбой уведомления не должен приводить к повторной сдаче.
@@ -397,10 +349,6 @@ def notify_teacher_group(work_code):
 
 
 
-def clean_path(text):
-    """Очищает имя для использования в пути файла."""
-    cleaned = "".join(c for c in text if c.isalpha() or c.isdigit() or c in (" ", "_", "-")).strip()
-    return cleaned or "Без названия"
 
 
 def make_work_code(subject, student_group, full_name, work_name):
@@ -423,8 +371,8 @@ def create_unique_work_code(cursor, subject, student_group, full_name, work_name
 
 def get_work_by_code(cursor, work_code):
     cursor.execute("""
-        SELECT w.id, w.work_code, w.user_id, w.subject, w.work_name, w.file_path,
-               w.status, w.timestamp, s.full_name, s.student_group
+        SELECT w.id, w.work_code, w.user_id, w.subject, w.work_name, w.file_id,
+            w.status, w.timestamp, s.full_name, s.student_group
         FROM works w LEFT JOIN students s ON s.user_id = w.user_id
         WHERE UPPER(w.work_code) = UPPER(?)
     """, (work_code,))
@@ -732,57 +680,25 @@ def process_file_step(message, subject, work_name):
         return
 
     document = message.document
-    max_file_size = 20 * 1024 * 1024  # Ограничение облачного Telegram Bot API на скачивание.
-    if document.file_size and document.file_size > max_file_size:
-        next_file_step(message, subject, work_name, "Файл больше 20 МиБ и Telegram Bot API не сможет скачать его. Отправьте файл до 20 МиБ или /cancel.")
-        return
     if not document.file_id:
         next_file_step(message, subject, work_name, "Telegram не передал идентификатор документа. Отправьте файл ещё раз или /cancel.")
         return
 
-    saved_path = None
     db_saved = False
     work_code = None
-    submitted_at = "—"
     try:
         student = get_student(chat_id)
         if not student:
             cancel_flow(message, "Регистрация не найдена. Сначала выполните /login; файл не был принят.")
             return
-        full_name, student_group = student[0], student[1]
-        original_name = os.path.basename(document.file_name or "report.bin")
-        _, file_extension = os.path.splitext(original_name)
-        # Не доверяем потенциально необычному расширению от пользовательского имени.
-        if file_extension and not re.fullmatch(r"\.[A-Za-z0-9]{1,10}", file_extension):
-            file_extension = ".bin"
-        new_file_name = f"{clean_path(work_name)}{file_extension.lower()}"
-        folder_path = os.path.join(BASE_FILES_DIR, clean_path(subject), clean_path(student_group), clean_path(full_name))
-        os.makedirs(folder_path, exist_ok=True)
-        full_file_path = os.path.join(folder_path, new_file_name)
-        # НИКОГДА не затираем ранее сданные работы — и в обычном режиме, и в debug.
-        stem, extension = os.path.splitext(new_file_name)
-        suffix = 2
-        while os.path.exists(full_file_path):
-            full_file_path = os.path.join(folder_path, f"{stem} ({suffix}){extension}")
-            suffix += 1
-        new_file_name = os.path.basename(full_file_path)
-
-        file_info = bot.get_file(document.file_id)
-        downloaded_file = bot.download_file(file_info.file_path)
-        if not downloaded_file:
-            raise RuntimeError("Telegram вернул пустой файл")
-        with open(full_file_path, "xb") as new_file:
-            new_file.write(downloaded_file)
-        saved_path = full_file_path
-
         conn = get_db_connection()
         try:
             cursor = conn.cursor()
-            work_code = create_unique_work_code(cursor, subject, student_group, full_name, work_name)
+            work_code = create_unique_work_code(cursor, subject, student[1], student[0], work_name)
             cursor.execute("""
-                INSERT INTO works (user_id, subject, work_name, file_path, status, timestamp, work_code)
-                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
-            """, (chat_id, subject, work_name, full_file_path, "НЕПРОВЕРЕНО", work_code))
+                INSERT INTO works (user_id, subject, work_name, file_id, status, timestamp, work_code)
+                VALUES (?, ?, ?, ?, 'НЕПРОВЕРЕНО', CURRENT_TIMESTAMP, ?)
+            """, (chat_id, subject, work_name, document.file_id, work_code))
             conn.commit()
             db_saved = True
             cursor.execute("SELECT timestamp FROM works WHERE work_code = ?", (work_code,))
@@ -796,44 +712,37 @@ def process_file_step(message, subject, work_name):
         except Exception as notify_error:
             print(f"Сдача {work_code} сохранена, но уведомление преподавателя завершилось ошибкой: {notify_error}")
             group_notified = False
+
         status_note = "Работа автоматически отправлена в группу преподавателя." if group_notified else (
-            "Работа сохранена, но бот не смог отправить уведомление в группу преподавателя. "
-            "Не отправляйте её повторно: передайте преподавателю ID этой работы. "
-            "Преподаватель может восстановить публикацию командой /retry_notify ID."
+            "Работа сохранена, но не удалось отправить её в группу преподавателя. "
+            "Не отправляйте её повторно; сообщите преподавателю ID работы."
         )
         bot.send_message(
             chat_id,
-            f"✅ Работа сохранена.\n\n"
-            f"Дисциплина: {html.escape(subject)}\n"
-            f"Работа: {html.escape(work_name)}\n"
-            f"Файл: {html.escape(new_file_name)}\n"
-            f"ID: <code>{html.escape(work_code)}</code>\n"
-            f"Дата отправки: {html.escape(str(submitted_at))}\n"
-            f"Статус: <b>НЕПРОВЕРЕНО</b>\n\n{html.escape(status_note)}",
+            f"✅ Работа сохранена.\\n\\n"
+            f"Дисциплина: {html.escape(subject)}\\n"
+            f"Работа: {html.escape(work_name)}\\n"
+            f"Файл: {html.escape(os.path.basename(document.file_name or 'Документ'))}\\n"
+            f"ID: <code>{html.escape(work_code)}</code>\\n"
+            f"Дата отправки: {html.escape(str(submitted_at))}\\n"
+            f"Статус: <b>НЕПРОВЕРЕНО</b>\\n\\n{html.escape(status_note)}",
             parse_mode="HTML",
             reply_markup=build_main_menu(),
         )
     except Exception as e:
-        print(f"Ошибка при сохранении файла/БД: {e}")
-        # Если файл был скачан, а запись в БД не состоялась, убираем только этот новый файл.
-        if not db_saved and saved_path and os.path.isfile(saved_path):
-            try:
-                os.remove(saved_path)
-            except OSError as cleanup_error:
-                print(f"Не удалось убрать временный файл {saved_path}: {cleanup_error}")
+        print(f"Ошибка при сохранении работы: {e}")
         if db_saved and work_code:
             bot.send_message(
                 chat_id,
-                f"Работа сохранена под ID <code>{html.escape(work_code)}</code>, но не удалось завершить отправку уведомления. "
-                "Не отправляйте работу повторно; сообщите преподавателю этот ID.",
+                f"Работа сохранена под ID <code>{html.escape(work_code)}</code>, "
+                "но не удалось завершить отправку уведомления. Не отправляйте её повторно.",
                 parse_mode="HTML",
                 reply_markup=build_main_menu(),
             )
         else:
             bot.send_message(
                 chat_id,
-                "Не удалось принять работу из-за ошибки сохранения. Запись не подтверждена. "
-                "Можно попробовать отправить файл ещё раз или обратиться к преподавателю.",
+                "Не удалось принять работу. Запись не подтверждена; попробуйте ещё раз или обратитесь к преподавателю.",
                 reply_markup=build_main_menu(),
             )
 
@@ -1033,50 +942,48 @@ def pull_works(message):
         bot.reply_to(message, "Не удалось получить список работ.")
 
 
-# 2. Получение файла по человекочитаемому ID работы
-@bot.message_handler(regexp=r"^/get_work(?:@\w+)?\s+[A-Za-z0-9-]+$")
+# Информация о работе по её ID — без повторной отправки файла.
+@bot.message_handler(regexp=r"^/get_work(?:@\\w+)?\\s+[A-Za-z0-9-]+$")
 def send_work_file(message):
     try:
-        work_code = message.text.split(maxsplit=1)[1].strip().upper()
+        parts = message.text.split(maxsplit=1)
+        if len(parts) < 2 or not parts[1].strip():
+            bot.reply_to(message, "Укажите ID работы: /get_work ID")
+            return
+        work_code = parts[1].strip().upper()
         conn = get_db_connection()
-        cursor = conn.cursor()
-        row = get_work_by_code(cursor, work_code)
-        conn.close()
+        try:
+            row = get_work_by_code(conn.cursor(), work_code)
+        finally:
+            conn.close()
         if not row:
             bot.reply_to(message, "Работа с таким ID не найдена.")
             return
-        _, saved_code, owner_id, subject, work_name, file_path, status, timestamp, full_name, student_group = row
+        _, saved_code, owner_id, subject, work_name, _, status, timestamp, full_name, student_group = row
         if message.chat.type in ("group", "supergroup"):
             if not authorize_teacher_command(message):
                 return
         elif message.chat.type == "private":
             if not message.from_user or message.from_user.id != owner_id:
-                bot.reply_to(message, "Из соображений приватности студент может скачивать только собственные работы.")
+                bot.reply_to(message, "Вы можете просматривать только информацию о собственных работах.")
                 return
         else:
-            bot.reply_to(message, "Скачивание доступно только владельцу работы или преподавателю в зарегистрированной группе.")
+            bot.reply_to(message, "Информация доступна владельцу работы или преподавателю в зарегистрированной группе.")
             return
-        if not os.path.isfile(file_path):
-            bot.reply_to(message, "Запись найдена, но файл отсутствует в хранилище. Сообщите преподавателю.")
-            return
-        bot.send_chat_action(message.chat.id, "upload_document")
-        with open(file_path, "rb") as doc:
-            bot.send_document(
-                message.chat.id, doc,
-                caption=(
-                    f"Работа: {html.escape(work_name or 'Без названия')}\n"
-                    f"ID: <code>{html.escape(saved_code)}</code>\n"
-                    f"Дисциплина: {html.escape(subject or '—')}\n"
-                    f"Студент: {html.escape(full_name or '—')} ({html.escape(student_group or '—')})\n"
-                    f"Дата отправки: {html.escape(str(timestamp or '—'))}\n"
-                    f"Статус: <b>{html.escape(status or 'НЕПРОВЕРЕНО')}</b>"
-                ),
-                parse_mode="HTML",
-            )
+        bot.reply_to(
+            message,
+            f"<b>Информация о работе</b>\\n"
+            f"Дисциплина: {html.escape(subject or '—')}\\n"
+            f"Работа: {html.escape(work_name or 'Без названия')}\\n"
+            f"Студент: {html.escape(full_name or '—')} ({html.escape(student_group or '—')})\\n"
+            f"Дата сдачи: {html.escape(str(timestamp or '—'))}\\n"
+            f"Статус: <b>{html.escape(status or 'НЕПРОВЕРЕНО')}</b>\\n"
+            f"ID: <code>{html.escape(saved_code)}</code>",
+            parse_mode="HTML",
+        )
     except Exception as e:
-        print(f"Ошибка при отправке файла: {e}")
-        bot.reply_to(message, "Не удалось отправить файл. Запись работы не изменена; попробуйте позже.")
-
+        print(f"Ошибка при получении информации о работе: {e}")
+        bot.reply_to(message, "Не удалось получить информацию о работе. Попробуйте позже.")
 
 def answer_student_work_button(call):
     """Обрабатывает приватные кнопки работы, предварительно проверяя владельца."""
@@ -1092,36 +999,12 @@ def answer_student_work_button(call):
     if not row:
         bot.answer_callback_query(call.id, "Работа не найдена.", show_alert=True)
         return
-    _, saved_code, owner_id, subject, work_name, file_path, status, timestamp, _, _ = row
+    _, saved_code, owner_id, subject, work_name, _, status, timestamp, _, _ = row
     if call.message.chat.type != "private" or not call.from_user or call.from_user.id != owner_id:
         bot.answer_callback_query(call.id, "Эта кнопка доступна только владельцу работы в личном чате.", show_alert=True)
         return
     if action == "status":
         bot.answer_callback_query(call.id, f"Статус: {status or 'НЕПРОВЕРЕНО'}", show_alert=True)
-        return
-    if action == "file":
-        if not os.path.isfile(file_path):
-            bot.answer_callback_query(call.id, "Файл отсутствует в хранилище.", show_alert=True)
-            return
-        try:
-            bot.answer_callback_query(call.id, "Отправляю файл…")
-            with open(file_path, "rb") as doc:
-                bot.send_document(
-                    call.message.chat.id, doc,
-                    caption=(
-                        f"Работа: {html.escape(work_name or 'Без названия')}\n"
-                        f"ID: <code>{html.escape(saved_code)}</code>\n"
-                        f"Дисциплина: {html.escape(subject or '—')}\n"
-                        f"Статус: <b>{html.escape(status or 'НЕПРОВЕРЕНО')}</b>"
-                    ),
-                    parse_mode="HTML",
-                )
-        except Exception as e:
-            print(f"Ошибка загрузки по кнопке для {saved_code}: {e}")
-            try:
-                bot.send_message(call.message.chat.id, "Не удалось отправить файл. Попробуйте позже.")
-            except Exception:
-                pass
         return
     bot.answer_callback_query(call.id, "Неизвестное действие.", show_alert=True)
 
@@ -1287,7 +1170,6 @@ def retry_teacher_notification(message):
 
 
 print(f"Бот запущен. Режим: {'DEBUG (временная копия)' if IS_DEBUG else 'обычный'}; база данных: {DB_PATH}")
-print(f"Путь хранения файлов: {BASE_FILES_DIR}")
 if IS_DEBUG:
     print("Исходные файлы в test_data не изменяются; временная копия удалится при завершении бота.")
 bot.infinity_polling()
