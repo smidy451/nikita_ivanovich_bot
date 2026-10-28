@@ -12,9 +12,26 @@ import re
 import html
 import telebot
 import logging
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from telebot.apihelper import ApiTelegramException
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s: %(message)s')
+
+
+EKATERINBURG_TZ = ZoneInfo("Asia/Yekaterinburg")
+
+
+def format_timestamp(value):
+    if not value:
+        return "—"
+    try:
+        dt = datetime.fromisoformat(str(value))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(EKATERINBURG_TZ).strftime("%d.%m.%Y %H:%M:%S")
+    except (ValueError, TypeError):
+        return str(value)
 
 # Пути относительно каталога проекта, а не текущего рабочего каталога.
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -316,7 +333,7 @@ def build_work_caption(row):
         f"Студент: {html.escape(full_name or '—')} ({html.escape(student_group or '—')})\n"
         f"Дисциплина: {html.escape(subject or '—')}\n"
         f"Работа: {html.escape(work_name or 'Без названия')}\n"
-        f"Дата сдачи: {html.escape(str(timestamp or '—'))}\n"
+        f"Дата сдачи: {html.escape(format_timestamp(timestamp))}\n"
         f"Статус: <b>{html.escape(status or 'НЕПРОВЕРЕНО')}</b>\n"
         f"ID: <code>{html.escape(work_code or '—')}</code>"
     )
@@ -834,7 +851,7 @@ def show_my_works(message):
             f"<b>{html.escape(work_name or 'Без названия')}</b>\n"
             f"Дисциплина: {html.escape(subject or '—')}\n"
             f"Статус: <b>{html.escape(status or 'НЕПРОВЕРЕНО')}</b>\n"
-            f"Дата: {html.escape(str(timestamp or '—'))}\n"
+            f"Дата: {html.escape(format_timestamp(timestamp))}\n"
             f"ID: <code>{html.escape(code or '—')}</code>"
         )
         bot.send_message(message.chat.id, text, parse_mode="HTML", reply_markup=build_student_work_keyboard(code))
@@ -909,7 +926,7 @@ def check_student_works(message):
                 f"{idx}. {html.escape(work_name or 'Без названия')}\n"
                 f"   ID: <code>{html.escape(work_code or '—')}</code>\n"
                 f"   Статус: <b>{html.escape(status or 'НЕПРОВЕРЕНО')}</b>\n"
-                f"   Дата: {html.escape(str(timestamp or '—'))}\n\n"
+                f"   Дата: {html.escape(format_timestamp(timestamp))}\n\n"
             )
             if len(response) > 3500:
                 bot.send_message(message.chat.id, response, parse_mode="HTML")
@@ -989,7 +1006,7 @@ def pull_works(message):
                 f"   Дисциплина: {html.escape(subject or '—')}\n"
                 f"   Студент: {html.escape(full_name or '—')} ({html.escape(student_group or '—')})\n"
                 f"   Статус: <b>{html.escape(status or 'НЕПРОВЕРЕНО')}</b>\n"
-                f"   Дата отправки: {html.escape(str(timestamp or '—'))}\n\n"
+                f"   Дата отправки: {html.escape(format_timestamp(timestamp))}\n\n"
             )
             if len(current) + len(item) > 3800:
                 chunks.append(current)
@@ -1039,7 +1056,7 @@ def send_work_file(message):
             f"Дисциплина: {html.escape(subject or '—')}\\n"
             f"Работа: {html.escape(work_name or 'Без названия')}\\n"
             f"Студент: {html.escape(full_name or '—')} ({html.escape(student_group or '—')})\\n"
-            f"Дата сдачи: {html.escape(str(timestamp or '—'))}\\n"
+            f"Дата сдачи: {html.escape(format_timestamp(timestamp))}\\n"
             f"Статус: <b>{html.escape(status or 'НЕПРОВЕРЕНО')}</b>\\n"
             f"ID: <code>{html.escape(saved_code)}</code>",
             parse_mode="HTML",
