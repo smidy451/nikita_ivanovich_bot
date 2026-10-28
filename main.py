@@ -14,7 +14,7 @@ import telebot
 
 # Пути относительно каталога проекта, а не текущего рабочего каталога.
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
-TOKEN = os.getenv("BOT_TOKEN")
+TOKEN = os.getenv("API_TOKEN")
 if not TOKEN:
     TOKEN = Path("token.txt").read_text().strip()
 if not TOKEN:
