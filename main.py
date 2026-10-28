@@ -223,11 +223,11 @@ def add_copy_id_button(keyboard, work_code):
         return
 
 
-def build_work_keyboard(work_code):
+def build_work_keyboard(work_code, current_status=None):
     keyboard = telebot.types.InlineKeyboardMarkup(row_width=2)
     buttons = [
         telebot.types.InlineKeyboardButton(
-            text=status,
+            text=f"✅ {status}" if status == (current_status or "").upper() else status,
             callback_data=f"ws|{work_code}|{STATUS_CALLBACK_CODES[status]}"
         )
         for status in ("ПРОВЕРЕНО", "ОТЛИЧНО", "ХОРОШО", "УДОВЛЕТВОРИТЕЛЬНО", "ВОЗВРАЩЕНО")
@@ -362,7 +362,7 @@ def notify_teacher_group(work_code):
             file_id,
             caption=build_work_caption(row),
             parse_mode="HTML",
-            reply_markup=build_work_keyboard(work_code),
+            reply_markup=build_work_keyboard(work_code, row[6]),
         )
 
     try:
@@ -1130,7 +1130,7 @@ def handle_work_status_button(call):
                 message_id=call.message.message_id,
                 caption=build_work_caption(row),
                 parse_mode="HTML",
-                reply_markup=build_work_keyboard(work_code),
+                reply_markup=build_work_keyboard(work_code, row[6]),
             )
         except Exception as edit_error:
             # Статус уже сохранён в SQLite. Не утверждаем, что он не поменялся только
@@ -1194,7 +1194,7 @@ def set_work_status(message):
                 bot.edit_message_caption(
                     chat_id=message_ref[0], message_id=message_ref[1],
                     caption=build_work_caption(row), parse_mode="HTML",
-                    reply_markup=build_work_keyboard(work_code),
+                    reply_markup=build_work_keyboard(work_code, row[6]),
                 )
                 caption_updated = True
             except Exception as edit_error:
