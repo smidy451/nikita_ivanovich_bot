@@ -11,6 +11,10 @@ import base64
 import re
 import html
 import telebot
+import logging
+from telebot.apihelper import ApiTelegramException
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s: %(message)s')
 
 # Пути относительно каталога проекта, а не текущего рабочего каталога.
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -115,11 +119,18 @@ VALID_STATUSES = {
 }
 
 
-# Реестр группы преподавателя хранится в обычном TXT-файле рядом с main.py.
-# Первая непустая строка файла должна содержать числовой ID группы.
-TEACHER_GROUP_REGISTRY_PATH = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "group_id.txt"
-)
+# Реестр группы преподавателя хранится в постоянном каталоге хостинга,
+# а при локальном запуске — рядом с main.py.
+if os.getenv("DATA_DIR"):
+    DATA_DIR = os.getenv("DATA_DIR", "/app/data")
+    os.makedirs(DATA_DIR, exist_ok=True)
+    TEACHER_GROUP_REGISTRY_PATH = os.path.join(DATA_DIR, "group_id.txt")
+    LEGACY_GROUP_REGISTRY_PATH = os.path.join(PROJECT_DIR, "group_id.txt")
+    if not os.path.exists(TEACHER_GROUP_REGISTRY_PATH) and os.path.exists(LEGACY_GROUP_REGISTRY_PATH):
+        shutil.copy2(LEGACY_GROUP_REGISTRY_PATH, TEACHER_GROUP_REGISTRY_PATH)
+else:
+    TEACHER_GROUP_REGISTRY_PATH = os.path.join(PROJECT_DIR, "group_id.txt")
+
 
 def get_registered_teacher_group_id():
     """Читает ID единственной разрешённой группы из group_id.txt."""
@@ -297,58 +308,93 @@ def build_work_caption(row):
     )
 
 
+def save_registered_teacher_group_id(chat_id):
+    """Атомарно сохраняет актуальный ID группы преподавателя."""
+    temp_path = TEACHER_GROUP_REGISTRY_PATH + ".tmp"
+    try:
+        with open(temp_path, "w", encoding="utf-8") as registry_file:
+            registry_file.write(f"{int(chat_id)}\n")
+        os.replace(temp_path, TEACHER_GROUP_REGISTRY_PATH)
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
 def notify_teacher_group(work_code):
-    """Публикует принятую работу с файлом в ленту преподавателя; возвращает факт доставки."""
+    """Публикует работу; при миграции группы обновляет ID и повторяет отправку."""
     teacher_chat_id = get_registered_teacher_group_id()
     if teacher_chat_id is None:
-        print("Не отправлена работа преподавателю: не задан ID в group_id.txt")
+        logging.error("Не задан ID группы преподавателя в group_id.txt")
         return False
 
     conn = get_db_connection()
-    cursor = conn.cursor()
-    row = get_work_by_code(cursor, work_code)
-    conn.close()
-    if not row:
-        print(f"Не удалось найти работу {work_code} для публикации в группе преподавателя")
-        return False
-
-    _, _, _, _, _, file_id, _, _, _, _ = row
-    if not file_id:
-        print(f"У работы {work_code} отсутствует Telegram file_id")
-        return False
-
     try:
-        sent_message = bot.send_document(
-            teacher_chat_id,
+        row = get_work_by_code(conn.cursor(), work_code)
+    finally:
+        conn.close()
+
+    if not row:
+        logging.error("Не найдена работа %s для публикации", work_code)
+        return False
+
+    file_id = row[5]
+    if not file_id:
+        logging.error("У работы %s отсутствует Telegram file_id", work_code)
+        return False
+
+    def send_document(chat_id):
+        return bot.send_document(
+            chat_id,
             file_id,
             caption=build_work_caption(row),
             parse_mode="HTML",
             reply_markup=build_work_keyboard(work_code),
-            )
-        # Сначала сохраняем результат доставки. Если не удалось сохранить ссылку на сообщение,
-        # сам факт отправки остаётся успешным и пользователь не будет введён в заблуждение.
-        conn = None
+        )
+
+    try:
         try:
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute(
-                "UPDATE works SET teacher_chat_id = ?, teacher_message_id = ? WHERE UPPER(work_code) = UPPER(?)",
+            sent_message = send_document(teacher_chat_id)
+        except ApiTelegramException as e:
+            parameters = (e.result_json or {}).get("parameters") or {}
+            new_chat_id = parameters.get("migrate_to_chat_id")
+            if not new_chat_id:
+                raise
+
+            new_chat_id = int(new_chat_id)
+            save_registered_teacher_group_id(new_chat_id)
+            logging.warning(
+                "Telegram перенёс группу преподавателя: %s -> %s. Новый ID сохранён.",
+                teacher_chat_id, new_chat_id,
+            )
+
+            try:
+                bot.send_message(
+                    new_chat_id,
+                    "ℹ️ Telegram преобразовал группу в супергруппу.\n"
+                    f"Бот автоматически обновил ID группы: {teacher_chat_id} -> {new_chat_id}.",
+                )
+            except Exception:
+                logging.exception("Не удалось уведомить группу о смене ID")
+
+            sent_message = send_document(new_chat_id)
+            teacher_chat_id = new_chat_id
+
+        conn = get_db_connection()
+        try:
+            conn.cursor().execute(
+                "UPDATE works SET teacher_chat_id = ?, teacher_message_id = ? "
+                "WHERE UPPER(work_code) = UPPER(?)",
                 (teacher_chat_id, sent_message.message_id, work_code),
             )
             conn.commit()
-        except Exception as metadata_error:
-            print(f"Работа {work_code} отправлена, но не удалось сохранить ссылку на сообщение: {metadata_error}")
+        except Exception:
+            logging.exception("Работа %s отправлена, но ссылка на сообщение не сохранена", work_code)
         finally:
-            if conn is not None:
-                conn.close()
+            conn.close()
         return True
-    except Exception as e:
-        # Сохранённую работу не удаляем: сбой уведомления не должен приводить к повторной сдаче.
-        print(f"Не удалось отправить работу {work_code} в группу преподавателя: {e}")
+    except Exception:
+        logging.exception("Не удалось отправить работу %s в группу преподавателя", work_code)
         return False
-
-
-
 
 
 def make_work_code(subject, student_group, full_name, work_name):
