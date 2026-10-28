@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 import sys
 import sqlite3
 import shutil
@@ -13,18 +14,13 @@ import telebot
 
 # Пути относительно каталога проекта, а не текущего рабочего каталога.
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+TOKEN = os.getenv("BOT_TOKEN")
+if not TOKEN:
+    TOKEN = Path("token.txt").read_text().strip()
+if not TOKEN:
+    raise RuntimeError("Не задан токен бота")
 
-# 1. Чтение токена из файла
-try:
-    with open(os.path.join(PROJECT_DIR, "token.txt"), "r", encoding="utf-8") as file:
-        BOT_TOKEN = file.read().strip()
-    if not BOT_TOKEN:
-        raise ValueError("Файл token.txt пуст")
-except (FileNotFoundError, ValueError) as e:
-    print(f"Ошибка чтения токена: {e}")
-    sys.exit(1)
-
-bot = telebot.TeleBot(BOT_TOKEN)
+bot = telebot.TeleBot(TOKEN)
 
 # 2. Определение режима работы и путей
 IS_DEBUG = "-debug" in sys.argv or "--debug" in sys.argv
