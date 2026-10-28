@@ -719,13 +719,13 @@ def process_file_step(message, subject, work_name):
         )
         bot.send_message(
             chat_id,
-            f"✅ Работа сохранена.\\n\\n"
-            f"Дисциплина: {html.escape(subject)}\\n"
-            f"Работа: {html.escape(work_name)}\\n"
-            f"Файл: {html.escape(os.path.basename(document.file_name or 'Документ'))}\\n"
-            f"ID: <code>{html.escape(work_code)}</code>\\n"
-            f"Дата отправки: {html.escape(str(submitted_at))}\\n"
-            f"Статус: <b>НЕПРОВЕРЕНО</b>\\n\\n{html.escape(status_note)}",
+            f"✅ Работа сохранена.\n\n"
+            f"Дисциплина: {html.escape(subject)}\n"
+            f"Работа: {html.escape(work_name)}\n"
+            f"Файл: {html.escape(os.path.basename(document.file_name or 'Документ'))}\n"
+            f"ID: <code>{html.escape(work_code)}</code>\n"
+            f"Дата отправки: {html.escape(str(submitted_at))}\n"
+            f"Статус: <b>НЕПРОВЕРЕНО</b>\n\n{html.escape(status_note)}",
             parse_mode="HTML",
             reply_markup=build_main_menu(),
         )
