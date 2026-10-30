@@ -1106,10 +1106,10 @@ def handle_work_status_button(call):
             bot.answer_callback_query(call.id, "Эта группа не зарегистрирована для управления ботом.", show_alert=True)
             return
 
-        member = bot.get_chat_member(call.message.chat.id, call.from_user.id)
-        if member.status not in ("administrator", "creator"):
-            bot.answer_callback_query(call.id, "Менять статус могут только администраторы группы.", show_alert=True)
-            return
+        # member = bot.get_chat_member(call.message.chat.id, call.from_user.id)
+        # if member.status not in ("administrator", "creator"):
+            # bot.answer_callback_query(call.id, "Менять статус могут только администраторы группы.", show_alert=True)
+            # return
 
         parts = call.data.split("|")
         if len(parts) != 3:
